@@ -42,23 +42,51 @@ float ZMPT101B::getRmsVoltage(uint8_t loopCount)
 	for (uint8_t i = 0; i < loopCount; i++)
 	{
 		int zeroPoint = this->getZeroPoint();
+		
+		// Validate zero point is reasonable (not floating)
+		// For ESP8266, valid ADC range is 0-1024, reasonable center should be 300-700
+		if (zeroPoint < 100 || zeroPoint > 900) {
+			// Pin might be floating or disconnected
+			return 0.0;
+		}
 
 		int32_t Vnow = 0;
 		uint32_t Vsum = 0;
 		uint32_t measurements_count = 0;
 		uint32_t t_start = micros();
+		int32_t maxDeviation = 0;
 
 		while (micros() - t_start < this->period)
 		{
 			Vnow = analogRead(pin) - zeroPoint;
 			Vsum += (Vnow * Vnow);
 			measurements_count++;
+			
+			// Track maximum deviation from zero point
+			if (abs(Vnow) > maxDeviation) {
+				maxDeviation = abs(Vnow);
+			}
+		}
+		
+		// Check if signal is above noise floor
+		// If maximum deviation is too small, it's likely just noise
+		if (maxDeviation < 3) {  // Minimum signal threshold (adjustable)
+			return 0.0;  // No meaningful signal detected
 		}
 
-		readingVoltage += sqrt(Vsum / measurements_count) / ADC_SCALE * VREF * this->sensitivity;
+		double rmsValue = sqrt((double)Vsum / measurements_count);
+		readingVoltage += (rmsValue / ADC_SCALE) * VREF * this->sensitivity;
 	}
 
-	return readingVoltage / loopCount;
+	float finalVoltage = readingVoltage / loopCount;
+	
+	// Apply final minimum threshold filter
+	// Values below this are considered noise/disconnected
+	if (finalVoltage < 0.1) {
+		return 0.0;
+	}
+
+	return finalVoltage;
 }
 
 }
